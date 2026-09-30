@@ -1,3 +1,7 @@
-.DS_Store
+# Build output. OS/editor/tool files belong in your global gitignore.
 /bin/
+# Local settings for docker compose (see README → Configuration)
 .env
+# Local Go workspace for developing against a baton checkout
+go.work
+go.work.sum
