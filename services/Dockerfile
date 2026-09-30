@@ -9,7 +9,7 @@ COPY services/ services/
 # Symbols are kept (no -s -w): the eBPF agent reads them to find Go functions.
 RUN CGO_ENABLED=0 go build -o /out/${SERVICE} ./services/${SERVICE}
 
-FROM alpine:3.22
+FROM alpine:3.24
 ARG SERVICE
 COPY --from=build /out/${SERVICE} /usr/local/bin/${SERVICE}
 ENV SERVICE=${SERVICE}
