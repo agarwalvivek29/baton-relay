@@ -1,0 +1,25 @@
+# Single-binary Tempo, local storage.
+# Based on https://github.com/grafana/tempo/blob/v3.1.0/example/docker-compose/single-binary/tempo.yaml
+stream_over_http_enabled: true
+
+server:
+  http_listen_port: 3200
+  log_level: warn
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "tempo:4317"
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks
+
+usage_report:
+  reporting_enabled: false

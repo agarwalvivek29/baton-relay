@@ -1,0 +1,108 @@
+# baton-relay: four Go services traced by eBPF (OBI), logs in Loki, traces in
+# Tempo, one Grafana. Run from this directory: docker compose up -d --build
+
+x-service: &service
+  build: &build
+    context: ..
+    dockerfile: services/Dockerfile
+    additional_contexts:
+      baton: ../../baton # dev only: the sibling SDK checkout (see go.mod)
+  restart: unless-stopped
+
+services:
+  gateway:
+    <<: *service
+    build: { <<: *build, args: { SERVICE: gateway } }
+    environment:
+      ORDERS_URL: http://orders:8081
+    ports: ["8080:8080"]
+
+  orders:
+    <<: *service
+    build: { <<: *build, args: { SERVICE: orders } }
+    environment:
+      PAYMENTS_URL: http://payments:8082
+      INVENTORY_URL: http://inventory:8083
+      FANOUT_MODE: ${FANOUT_MODE:-sync}
+      DROP_CONTEXT: ${DROP_CONTEXT:-0}
+
+  payments:
+    <<: *service
+    build: { <<: *build, args: { SERVICE: payments } }
+    environment:
+      FAIL_RATE: ${FAIL_RATE:-0.2}
+
+  inventory:
+    <<: *service
+    build: { <<: *build, args: { SERVICE: inventory } }
+
+  # eBPF auto-instrumentation. Needs a privileged container in the host PID
+  # namespace so it can attach uprobes to the services' Go binaries.
+  # https://github.com/open-telemetry/opentelemetry-ebpf-instrumentation/blob/v0.13.0/examples/http-header-enrichment-demo/docker-compose.yaml
+  obi:
+    image: otel/ebpf-instrument:v0.13.0
+    privileged: true
+    pid: host
+    # On Docker Desktop a SIGKILLed agent can linger as a zombie for a few
+    # seconds while its probes detach; an init process and a grace period
+    # let it shut down cleanly.
+    init: true
+    stop_grace_period: 30s
+    environment:
+      OTEL_EBPF_CONFIG_PATH: /etc/obi/obi.yml
+      OTEL_EBPF_LOG_LEVEL: ${OBI_LOG_LEVEL:-INFO}
+      OTEL_EBPF_TRACE_PRINTER: ${OBI_TRACE_PRINTER:-disabled}
+    volumes:
+      - ./obi.yml:/etc/obi/obi.yml:ro
+      - /sys/kernel/security:/sys/kernel/security
+      - /sys/kernel/tracing:/sys/kernel/tracing:ro
+    depends_on: [otel-collector]
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.161.0
+    command: ["--config=/etc/otelcol/config.yml"]
+    volumes:
+      - ./otel-collector.yml:/etc/otelcol/config.yml:ro
+    depends_on: [tempo]
+
+  tempo:
+    image: grafana/tempo:3.1.0
+    command: ["-target=all", "-config.file=/etc/tempo.yml"]
+    user: "0"
+    volumes:
+      - ./tempo.yml:/etc/tempo.yml:ro
+      - tempo-data:/var/tempo
+    ports: ["3200:3200"]
+
+  loki:
+    image: grafana/loki:3.7.8
+    command: ["-config.file=/etc/loki/config.yml"]
+    user: "0"
+    volumes:
+      - ./loki.yml:/etc/loki/config.yml:ro
+      - loki-data:/loki
+    ports: ["3100:3100"]
+
+  alloy:
+    image: grafana/alloy:v1.20.1
+    command: ["run", "/etc/alloy/config.alloy", "--storage.path=/var/lib/alloy/data"]
+    volumes:
+      - ./alloy.config:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on: [loki]
+
+  grafana:
+    image: grafana/grafana:13.2.3
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports: ["3000:3000"]
+    depends_on: [loki, tempo]
+
+volumes:
+  tempo-data:
+  loki-data:

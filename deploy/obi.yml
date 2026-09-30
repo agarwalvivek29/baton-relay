@@ -1,0 +1,69 @@
+# OpenTelemetry eBPF Instrumentation (OBI) v0.13.0.
+# Every key below was checked against the source at the v0.13.0 tag.
+# Base: https://github.com/open-telemetry/opentelemetry-ebpf-instrumentation/blob/v0.13.0
+
+# Which processes to instrument: anything listening on 8080-8083 (our four
+# services). Keys: pkg/appolly/services/attr_glob.go (open_ports), range
+# syntax "a-b": pkg/appolly/services IntEnum.UnmarshalText.
+# https://github.com/open-telemetry/opentelemetry-ebpf-instrumentation/blob/v0.13.0/pkg/appolly/services/attr_glob.go
+discovery:
+  instrument:
+    # Both must match (AND): our binaries, on our ports. Without exe_path the
+    # Docker VM's dockerd and coredns match the port range too.
+    - open_ports: "8080-8083"
+      exe_path: "/usr/local/bin/*"
+
+  # Use OBI's generic (kprobe) HTTP tracer for Go too, not the Go uprobes.
+  # Measured on OBI v0.13.0 (docs/goroutines.md): with the Go uprobes only
+  # the edge server span got the X-Request-ID attribute (0/20 requests
+  # covered on every hop); with the generic tracer 20/20 did.
+  # $OBI/pkg/appolly/services/criteria.go (SkipGoSpecificTracers)
+  # Same setting in OBI's own demo:
+  # $OBI/examples/http-header-enrichment-demo/docker-compose.yaml
+  skip_go_specific_tracers: true
+
+# Send traces to the collector over OTLP/HTTP (/v1/traces is appended).
+# https://github.com/open-telemetry/opentelemetry-ebpf-instrumentation/blob/v0.13.0/pkg/export/otel/otelcfg/config_traces.go
+otel_traces_export:
+  endpoint: http://otel-collector:4318
+
+ebpf:
+  # Inject W3C traceparent on outbound calls so gateway → orders → payments
+  # can be ONE trace. The default is "disabled". Valid: all, disabled, headers,
+  # tcp. With the generic tracer this goes through the sk_msg injector, which
+  # OBI turns off on kernels with the FIONREAD bug (6.6.128+, 6.12.75+,
+  # 6.18.14+, 6.19+; Docker Desktop's 6.12.76 is one). The demo doesn't depend
+  # on it: the request ID finds every trace either way.
+  # $OBI/pkg/internal/ebpf/tpinjector/fionread_check.go
+  # https://github.com/open-telemetry/opentelemetry-ebpf-instrumentation/blob/v0.13.0/pkg/config/ebpf_tracer.go (ContextPropagation, L86; parser ~L205-240)
+  # https://github.com/open-telemetry/opentelemetry-ebpf-instrumentation/blob/v0.13.0/devdocs/context-propagation.md
+  context_propagation: headers
+
+  # Header capture needs the HTTP payload buffer; the default 0 captures nothing.
+  # https://github.com/open-telemetry/opentelemetry-ebpf-instrumentation/blob/v0.13.0/pkg/config/ebpf_tracer.go (EBPFBufferSizes.HTTP, L183)
+  buffer_sizes:
+    http: 8192
+
+  # Capture X-Request-ID onto spans as the string-array attributes
+  # "http.request.header.x-request-id" and "http.response.header.x-request-id".
+  # Everything else is excluded. The response side matters at the edge: when
+  # the client sends no ID, baton mints one in gateway, so the only place eBPF
+  # can see it on gateway's server span is the echoed response header.
+  # Keys: https://github.com/open-telemetry/opentelemetry-ebpf-instrumentation/blob/v0.13.0/pkg/config/payload_extraction.go (EnrichmentConfig)
+  # Example: https://github.com/open-telemetry/opentelemetry-ebpf-instrumentation/blob/v0.13.0/internal/test/integration/configs/obi-config-http-enrichment-body.yml
+  # Attribute name: https://github.com/open-telemetry/opentelemetry-ebpf-instrumentation/blob/v0.13.0/pkg/export/attributes/names/attrs.go (HTTPRequestHeaderPrefix)
+  payload_extraction:
+    http:
+      enrichment:
+        enabled: true
+        policy:
+          default_action:
+            headers: exclude
+            body: exclude
+        rules:
+          - action: include
+            type: headers
+            scope: all # request and response headers
+            match:
+              patterns: ["X-Request-ID"]
+              case_sensitive: false

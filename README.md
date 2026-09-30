@@ -4,7 +4,7 @@
 
 This is the demo companion to [**baton**](https://github.com/agarwalvivek29/baton), built for the MumbaiFOSS 2026 talk *"eBPF Sees Every Request. Your Service Has No Idea Which Trace It's In."*
 
-> 🚧 Early stage. The architecture below is the plan. It will be runnable before Oct 31, 2026.
+> 🚧 Pre-release. Runs today (see *Run it*); it builds against a local `baton` checkout until baton v0.1.0 is tagged.
 
 ## What you'll see
 
@@ -19,68 +19,88 @@ flowchart LR
     U[client / load generator] --> A[gateway]
     A --> B[orders]
     B --> C[payments]
+    B --> D[inventory]
 
-    subgraph kernel [eBPF: Beyla / OBI]
+    subgraph kernel [eBPF: OpenTelemetry eBPF Instrumentation]
       K[reads HTTP in-kernel<br/>X-Request-ID → span attribute]
     end
     A -.-> K
     B -.-> K
     C -.-> K
+    D -.-> K
 
     K --> O[OpenTelemetry Collector] --> T[(Tempo: traces)]
-    A & B & C -- JSON logs with request_id --> L[(Loki: logs)]
+    A & B & C & D -- JSON logs with request_id --> Y[Alloy] --> L[(Loki: logs)]
     L -- "derived field: request_id → trace search" --> G[Grafana]
     T --> G
 ```
 
-- **Services** (`gateway`, `orders`, `payments`): plain Go `net/http`. The **only** extra code is [`baton`](https://github.com/agarwalvivek29/baton): middleware, client transport and log handler.
-- **Beyla / OBI**: traces every service from the kernel and captures `X-Request-ID` as a span attribute.
-- **Grafana**: a log line's `request_id` links to a trace search, so one click takes you from log to trace.
+- **Services** (`gateway`, `orders`, `payments`, `inventory`): plain Go `net/http`. The **only** extra code is [`baton`](https://github.com/agarwalvivek29/baton): middleware, client transport and log handler.
+- **OBI** ([OpenTelemetry eBPF Instrumentation](https://github.com/open-telemetry/opentelemetry-ebpf-instrumentation) v0.13.0): traces every service from the kernel and captures `X-Request-ID` as a span attribute.
+- **Grafana**: a log line's `request_id` links to a TraceQL **search**, so one click returns every trace carrying that ID, even when eBPF split the request into several.
 
 Every component is FOSS.
 
-## Planned layout
+## Layout
 
 ```
 baton-relay/
 ├── services/
-│   ├── gateway/
-│   ├── orders/
-│   └── payments/        # has a flaky endpoint, so there's something to debug
+│   ├── gateway/         # the edge: baton mints the ID here
+│   ├── orders/          # fans out: FANOUT_MODE=sync|go|pool
+│   ├── payments/        # flaky (?fail=1, FAIL_RATE), so there's something to debug
+│   ├── inventory/
+│   └── Dockerfile       # one image per service (--build-arg SERVICE=...)
 ├── deploy/
-│   ├── docker-compose.yml   # one command, runs on a laptop (Linux or Docker Desktop)
-│   ├── beyla.yml            # header capture config
-│   ├── otel-collector.yml
-│   └── grafana/             # datasources + log→trace link, pre-provisioned
-└── scripts/
-    └── break-it.sh          # fires a request that fails at payments
+│   ├── docker-compose.yml
+│   ├── obi.yml          # eBPF agent: header capture, every key cited to upstream source
+│   ├── otel-collector.yml, tempo.yml, loki.yml, alloy.config
+│   └── grafana/provisioning/datasources/   # Loki → Tempo log link
+├── scripts/
+│   ├── break-it.sh      # good requests + one that fails at payments; prints its ID
+│   ├── fanout.sh        # requests through each fan-out mode; prints IDs
+│   ├── count-traces.py  # per request: #traces eBPF produced, ID on every hop?
+│   └── count-by-window.py
+└── docs/goroutines.md   # measured results
 ```
 
-## Run it (planned)
+## Run it
+
+**You need:** Docker with a Linux kernel that has eBPF and BTF (≥ 5.8). This is tested on **Docker Desktop for Mac on Apple Silicon** (kernel 6.12.76-linuxkit) and should work on any recent Linux host. The eBPF agent runs `privileged` with `pid: host`.
+
+Until baton v0.1.0 is tagged, clone both repos side by side:
 
 ```bash
+git clone https://github.com/agarwalvivek29/baton
 git clone https://github.com/agarwalvivek29/baton-relay
 cd baton-relay/deploy
-docker compose up
-./scripts/break-it.sh
-# open http://localhost:3000 → Explore → Loki → click the error's request_id
+docker compose up -d --build        # ~1 min the first time
+cd .. && ./scripts/break-it.sh      # prints the failing request's ID
 ```
 
-> Beyla needs a Linux kernel with eBPF support and elevated privileges. The compose file will document exactly what's required.
+Open <http://localhost:3000/explore> (no login). In **Loki**, run `{service=~".+"} |= "<the ID>"`. Open the `ERROR` line, then **Links → "Find every trace for this request"**.
+
+![log line with the link](docs/img/log-line-link.png)
+![one click, three traces](docs/img/one-click-three-traces.png)
+
+Tempo needs about a minute before new spans are searchable. If the trace search comes back empty, wait and run it again.
+
+**Fan-out modes:** `./scripts/fanout.sh` sends one request per mode and prints each ID. `docs/goroutines.md` has the measured results: eBPF split up to 55% of requests into several traces, and the request ID was on every hop of every request.
 
 ## Try breaking it
 
 The demo also shows the sharp edges:
 
-- **Remove `baton` from one service:** the chain breaks at that hop and one request becomes two traces.
-- **Make a call with `context.Background()`:** the ID is silently dropped.
+- **Make a call with `context.Background()`:** `curl -H 'X-Request-ID: drop-1' 'localhost:8080/checkout?drop_ctx=1'`, or set `DROP_CONTEXT=1` for `orders`. The ID is dropped at orders → payments. orders logs `outbound call has no request ID`, and payments' logs get a different ID, so the log/trace join breaks right there.
+- **Remove `baton` from one service:** the chain breaks at that hop, and the ID is lost from there on.
 
 ## Roadmap
 
-- [ ] Three services + baton wired in
-- [ ] docker-compose with Beyla, Collector, Tempo, Loki, Grafana
-- [ ] Log → trace link pre-provisioned in Grafana
-- [ ] `break-it.sh` + a "sharp edges" walkthrough
+- [x] Four services + baton wired in, with goroutine fan-out modes
+- [x] docker-compose with OBI, Collector, Tempo, Loki, Alloy, Grafana
+- [x] Log → trace search link pre-provisioned in Grafana
+- [x] `break-it.sh`, `fanout.sh` + measured results (`docs/goroutines.md`)
+- [ ] Switch to a tagged baton release
 - [ ] Recorded walkthrough video
 
 ## License
