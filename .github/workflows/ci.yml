@@ -12,34 +12,23 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      # go.mod builds against a sibling baton checkout until baton v0.1.0 is tagged.
       - uses: actions/checkout@v4
-        with:
-          path: baton-relay
-      - uses: actions/checkout@v4
-        with:
-          repository: agarwalvivek29/baton
-          path: baton
       - uses: actions/setup-go@v5
         with:
           go-version: stable
       - name: gofmt
-        working-directory: baton-relay
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - name: vet and build services
-        working-directory: baton-relay
         run: |
           go vet ./...
           go build ./services/...
       - name: shellcheck
-        working-directory: baton-relay
         run: shellcheck scripts/*.sh
       - name: python scripts compile
-        working-directory: baton-relay
         run: python3 -m py_compile scripts/*.py
       - name: compose file is valid
-        working-directory: baton-relay/deploy
+        working-directory: deploy
         run: docker compose config -q
       - name: build service images
-        working-directory: baton-relay/deploy
+        working-directory: deploy
         run: docker compose build gateway orders payments inventory

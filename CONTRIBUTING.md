@@ -12,16 +12,15 @@
 
 ## Development
 
-Clone both repos side by side (`go.mod` points at `../baton` until a tagged release):
-
 ```bash
-git clone https://github.com/agarwalvivek29/baton
 git clone https://github.com/agarwalvivek29/baton-relay
 cd baton-relay
 go vet ./... && go build ./services/...
 shellcheck scripts/*.sh
 cd deploy && docker compose up -d --build
 ```
+
+To try unreleased baton changes, use a local workspace (ignored by git): `go work init . ../baton`.
 
 ## Pull requests
 

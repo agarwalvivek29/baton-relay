@@ -1,11 +1,10 @@
 # One image per service: docker build --build-arg SERVICE=orders ...
-# Build context is the repo root; the `baton` additional context is the SDK
-# checkout (development only, see go.mod replace).
+# Build context is the repo root.
 FROM golang:1.26-alpine AS build
 ARG SERVICE
-WORKDIR /src/baton-relay
-COPY --from=baton . /src/baton
-COPY go.mod go.sum* ./
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
 COPY services/ services/
 # Symbols are kept (no -s -w): the eBPF agent reads them to find Go functions.
 RUN CGO_ENABLED=0 go build -o /out/${SERVICE} ./services/${SERVICE}

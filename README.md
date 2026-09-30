@@ -8,7 +8,7 @@
 
 This is the runnable companion to [**baton**](https://github.com/agarwalvivek29/baton), built for the MumbaiFOSS 2026 talk *"eBPF Sees Every Request. Your Service Has No Idea Which Trace It's In."*
 
-> 🚧 **Pre-release.** It runs today. It builds against a local `baton` checkout until baton v0.1.0 is tagged.
+> Uses [baton v0.1.0](https://github.com/agarwalvivek29/baton/releases/tag/v0.1.0).
 
 ---
 
@@ -78,10 +78,7 @@ Every component is FOSS, and every image tag is pinned.
 
 **Start**
 
-Until baton v0.1.0 is tagged, clone both repos side by side:
-
 ```bash
-git clone https://github.com/agarwalvivek29/baton
 git clone https://github.com/agarwalvivek29/baton-relay
 cd baton-relay/deploy
 docker compose up -d --build        # about a minute the first time
@@ -196,7 +193,7 @@ baton-relay/
 - [x] Compose stack: OBI, Collector, Tempo, Loki, Alloy, Grafana
 - [x] Log → trace search link, pre-provisioned
 - [x] Scripts and measured results
-- [ ] Switch to a tagged baton release
+- [x] Switch to a tagged baton release (v0.1.0)
 - [ ] Measure on a kernel without the FIONREAD bug
 - [ ] Recorded walkthrough video
 

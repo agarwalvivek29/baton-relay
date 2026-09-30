@@ -5,8 +5,6 @@ x-service: &service
   build: &build
     context: ..
     dockerfile: services/Dockerfile
-    additional_contexts:
-      baton: ../../baton # dev only: the sibling SDK checkout (see go.mod)
   restart: unless-stopped
 
 services:
