@@ -38,7 +38,7 @@ services:
   # namespace so it can attach uprobes to the services' Go binaries.
   # https://github.com/open-telemetry/opentelemetry-ebpf-instrumentation/blob/v0.13.0/examples/http-header-enrichment-demo/docker-compose.yaml
   obi:
-    image: otel/ebpf-instrument:v0.13.0
+    image: otel/ebpf-instrument:v0.15.2
     privileged: true
     pid: host
     # On Docker Desktop a SIGKILLed agent can linger as a zombie for a few
